@@ -1,0 +1,6 @@
+FROM postgres:17.3
+VOLUME /var/lib/postgresql/data
+ENV POSTGRES_PASSWORD="M@rk1993"
+ENV POSTGRES_USER="leo"
+ENV POSTGRES_DB="leo_db"
+EXPOSE 5432

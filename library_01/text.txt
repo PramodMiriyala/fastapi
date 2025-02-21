@@ -1,0 +1,105 @@
+from fastapi import FastAPI, HTTPException, Depends
+from pydantic import BaseModel
+from sqlalchemy import create_engine, Column, Integer, String, Date
+from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.ext.declarative import declarative_base
+from db.database import DATABASE_URL
+from datetime import date
+
+# Create a SQLAlchemy engine to connect to the database
+engine = create_engine(DATABASE_URL)
+
+# Create a session maker to interact with the database
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Create a base class for declarative models
+Base = declarative_base()
+
+# Create a FastAPI application
+app = FastAPI()
+
+# Define the Book model
+class Book(Base):
+    __tablename__ = "books"  # Name of the table
+
+    # Define the columns of the 'books' table
+    id = Column(Integer, primary_key=True, index=True, nullable=False)
+    title = Column(String, index=True, nullable=False)
+    author = Column(String, nullable=False)
+    isbn = Column(String, nullable=False)
+    published_date = Column(Date, nullable=False)
+
+# Create the database tables
+Base.metadata.create_all(bind=engine)
+
+# Define the Pydantic request model for creating books
+class BookRequest(BaseModel):
+    title: str
+    author: str
+    isbn: str
+    published_date: date
+    class Config:
+        from_attributes = True
+
+# Define the Pydantic response model for returning book data
+class BookResponse(BookRequest):
+    id: int  # Include the book ID in the response
+
+# Dependency to get a database session
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db  # Yield the database session for use in endpoints
+    finally:
+        db.close()  # Close the session after use
+
+# API endpoint to get all books
+@app.get("/books", response_model=list[BookResponse])
+def get_books(db: Session = Depends(get_db)):
+    all_books = db.query(Book).all()  # Query all books from the database
+    return [BookResponse(**vars(book)) for book in all_books]  # Convert SQLAlchemy objects to Pydantic models
+
+# API endpoint to get a book by ID
+@app.get("/books/{book_id}", response_model=BookResponse)
+def get_book(book_id: int, db: Session = Depends(get_db)):
+    book = db.get(Book, book_id)  # Retrieve the book by ID from the database
+    if not book:
+        raise HTTPException(status_code=404, detail="Book with the given ID is not present")
+    return BookResponse(**vars(book))  # Convert and return as Pydantic model
+
+# API endpoint to create a new book
+@app.post("/books/{book_id}", response_model=BookResponse)
+def post_book(book_id: int, book: BookRequest, db: Session = Depends(get_db)):
+    existing_book = db.get(Book, book_id)  # Check if a book with this ID already exists
+    if existing_book:
+        raise HTTPException(status_code=409, detail="Book already present in the database")
+    
+    # Create a new Book instance using unpacked attributes from BookRequest
+    new_book = Book(id=book_id, **book.model_dump())
+    
+    db.add(new_book)  # Add new book to the session
+    db.commit()  # Commit changes to the database
+    db.refresh(new_book)  # Refresh instance to get updated data (including ID)
+    
+    return BookResponse(**vars(new_book))  # Convert and return as Pydantic model
+    # Another approach
+    # new_book = Book(
+    #     id=book_id,
+    #     title=book.title,
+    #     author=book.author,
+    #     isbn=book.isbn,
+    #     published_date=book.published_date
+    # )
+
+# API endpoint to delete a book by ID
+@app.delete("/books/{book_id}", response_model=BookResponse)
+def del_book(book_id: int, db: Session = Depends(get_db)):
+    book = db.get(Book, book_id)  # Retrieve the book by ID from the database
+    if not book:
+        raise HTTPException(status_code=404, detail="Book with the given ID is not present")
+    
+    response_data = BookResponse(**vars(book))  # Prepare response data before deletion
+    db.delete(book)  # Delete the book from the session
+    db.commit()  # Commit changes to remove it from the database
+    
+    return response_data  # Return deleted book information as response
